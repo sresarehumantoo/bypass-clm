@@ -37,7 +37,15 @@ path (no AppLocker bypass needed). Self-contained single-file publish.
 | Tested .NET runtime | 10.0.15 |
 | Tested OS | Windows Server 2025 (10.0.26100.32230) |
 
-**Building** (requires .NET SDK 10.0+):
+**Building with Docker** (no SDK needed):
+
+```
+docker build --output dist .
+# ARM64 target:
+docker build --build-arg RID=win-arm64 --output dist .
+```
+
+**Building locally** (requires .NET SDK 10.0+):
 
 ```
 # Linux cross-compile

@@ -1,0 +1,9 @@
+dist/
+framework/
+docs/
+bypass-clm/bin/
+bypass-clm/obj/
+.git/
+.gitignore
+.gitattributes
+README.md
