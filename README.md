@@ -7,6 +7,35 @@ install needed).
 
 Modernized fork of [calebstewart/bypass-clm](https://github.com/calebstewart/bypass-clm).
 
+## Building
+
+`build.sh` builds both the modern (.NET 10) and framework variants, locally
+or via Docker.
+
+```
+./build.sh                              # standard exe, local .NET SDK
+./build.sh --docker                     # standard exe via Docker (no SDK needed)
+./build.sh --docker -m all              # all three variants via Docker
+./build.sh --docker -m slim,standard    # pick specific variants
+./build.sh -m slim -r win-arm64         # ARM64 slim exe, local SDK
+./build.sh -h                           # full usage
+```
+
+**Modes:**
+
+| Mode | Output | Description |
+|---|---|---|
+| `standard` | `bypass-clm.exe` (123 MB) | Self-contained exe; patches CLM + AMSI in memory |
+| `slim` | `bypass-clm-slim.exe` (123 MB) | Self-contained exe; no patches, just the runspace escape |
+| `dll` | `bypass-clm.dll` (8 KB) | Framework-dependent class library; call `[loader.MainClass]::go()` from a .NET 10+ host |
+| `all` | all three | Builds standard + slim + dll |
+
+The `slim` variant omits the memory patches, so it has fewer signaturable
+strings. It relies on being executed from an AppLocker-allowed path instead.
+The `dll` variant is a class library for injection into an existing .NET 10+
+process (e.g. `Add-Type -Path bypass-clm.dll; [loader.MainClass]::go()` from
+a PowerShell 7.6+ session that already has Full Language).
+
 ## Variants
 
 ### Modern (.NET 10)
@@ -37,27 +66,6 @@ path (no AppLocker bypass needed). Self-contained single-file publish.
 | Tested .NET runtime | 10.0.15 |
 | Tested OS | Windows Server 2025 (10.0.26100.32230) |
 
-**Building with Docker** (no SDK needed):
-
-```
-docker build --output dist .
-# ARM64 target:
-docker build --build-arg RID=win-arm64 --output dist .
-```
-
-**Building locally** (requires .NET SDK 10.0+):
-
-```
-# Linux cross-compile
-./build.sh            # default: win-x64
-./build.sh win-arm64  # ARM64 target
-
-# Windows
-dotnet publish bypass-clm/bypass-clm.csproj -c Release -r win-x64 -o dist\win-x64
-```
-
-Output is a single self-contained `bypass-clm.exe` in `dist/`.
-
 ### Framework (.NET Framework 4.x)
 
 Compiles on-target with `csc.exe` from the .NET Framework already on Windows
@@ -79,7 +87,7 @@ Three build variants from a single source file via preprocessor directives:
 **Building** (on target, in PowerShell):
 
 ```powershell
-cd C:\work   # or wherever you dropped the files
+cd C:\work
 .\build.ps1
 ```
 
@@ -120,7 +128,7 @@ PS> exit
   modern variant (does not exist on modern .NET).
 - Patched `AmsiScanBuffer` with correct calling-convention stubs for both
   x64 and x86.
-- Added `build.sh` for Linux cross-compilation.
+- Added `build.sh` with `--docker` and `-m standard,slim,dll,all` modes.
 - Added `framework/` variant: compiles with csc.exe on-target, three build
   outputs (full exe, slim exe, InstallUtil DLL), WinPS 5.1 runspace.
 
