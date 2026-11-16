@@ -338,3 +338,11 @@ ASALocalRun/
 
 # BeatPulse healthcheck temp database
 healthchecksdbdist/
+
+# Build output
+dist/
+
+# Framework variant build outputs (compiled on-target)
+framework/*.exe
+framework/*.dll
+framework/*.pdb
