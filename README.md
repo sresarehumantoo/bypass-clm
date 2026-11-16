@@ -1,27 +1,72 @@
-# PowerShell Constrained Language Mode Bypass
+# bypass-clm
 
-This will build an executable which executes a Full Language Mode powershell session even when Constrained Language Mode is enabled. At the time of writing, the only bypass methods I have found are downgrading to PowerShell version 2 or using Runspaces from .Net. PowerShell version 2 is not commonly available now, and Runspaces do not natively provide an interactive interface. This method will provide a full powershell session just like running `powershell.exe`, but will *always* be in Full Language Mode.
+Bypass PowerShell Constrained Language Mode on modern .NET. Patches
+`GetSystemLockdownPolicy` and `AmsiScanBuffer` in memory, then drops into a
+Full Language Mode interactive PowerShell session, all from a single
+self-contained executable.
 
-This is accomplished by doing the following:
+Modernized fork of [calebstewart/bypass-clm](https://github.com/calebstewart/bypass-clm),
+ported from .NET Framework 4.x to .NET 10 with the PowerShell 7.6 hosting API.
 
-1. We reflectively load the internal `SystemPolicy` class within `System.Management.Automation`
-2. We ensure the static method `GetSystemLockdownPolicy` has been compiled by the JIT engine.
-3. We retrieve a function pointer for the compiled method.
-4. We utilize VirtualProtect to ensure the function code is writable.
-5. We overwrite the method with the stub `xor rax,rax; ret`. This effectively forces `GetSystemLockdownPolicy` to return `SystemEnforcementMode.None`.
-6. We utilize the `Microsoft.PowerShell.ConsoleShell` module to load an interactive PowerShell session within this process.
+![demo](docs/demo.gif)
 
-We also implement a method similar to the `rasta-mouse` AMSI Bypass to ensure the new shell is not scanned by AMSI.
+## How it works
 
-It's worth noting that this will not spawn `powershell.exe`. The PowerShell prompt and interpreter are run from memory in the current process.
+1. Reflectively loads the `SystemPolicy` class from `System.Management.Automation`.
+2. JIT-compiles `GetSystemLockdownPolicy`, then overwrites it with
+   `xor rax,rax; ret` via `VirtualProtect` + `Marshal.Copy`, forcing it to
+   return `SystemEnforcementMode.None`.
+3. Patches `AmsiScanBuffer` (rasta-mouse technique) to return `E_INVALIDARG`,
+   disabling AMSI scanning for the process.
+4. Opens a PowerShell runspace via `InitialSessionState.CreateDefault2()` and
+   runs an interactive REPL.
 
-## Executing a FLM Shell under AppControl
+No `powershell.exe` process is spawned. The interpreter runs in-process from
+the .NET libraries.
 
-If `AppControl` is enabled, you can use the well known `InstallUtil` method. This project supports being loaded by `InstallUtil`. Simply place the binary in a safe directory (`C:\Windows\Tasks\` is a common safe directory) and run the following:
+## Building
 
-```batch
-REM find `InstallUtil`
-dir \Windows\Microsoft.NET\* /s/b | findstr InstallUtil.exe$
-REM Run the FLM powershell session
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U "C:\Windows\Tasks\bypass-clm.exe"
+Requires .NET SDK 10.0+.
+
+### Linux (cross-compile)
+
 ```
+./build.sh            # default: win-x64
+./build.sh win-arm64  # ARM64 target
+```
+
+### Windows
+
+```
+dotnet publish bypass-clm/bypass-clm.csproj -c Release -r win-x64 -o dist\win-x64
+```
+
+Output is a single self-contained `bypass-clm.exe` in `dist/`.
+
+## Usage
+
+Copy `bypass-clm.exe` to the target and run it. You get a `PS>` prompt in Full
+Language Mode with AMSI disabled.
+
+```
+C:\work> bypass-clm.exe
+PS> $ExecutionContext.SessionState.LanguageMode
+FullLanguage
+PS> exit
+```
+
+## Changes from upstream
+
+- Ported from .NET Framework 4.7.2 to .NET 10 (self-contained single-file publish).
+- Replaced deprecated `ConsoleShell.Start` / `RunspaceConfiguration` with
+  `InitialSessionState.CreateDefault2()` and the modern PowerShell hosting API.
+- Removed `System.Configuration.Install` / `InstallUtil` loader class
+  (does not exist on modern .NET).
+- Patched `AmsiScanBuffer` with correct calling-convention stubs for both
+  x64 and x86.
+- Added `build.sh` for Linux cross-compilation.
+
+## Credits
+
+Original project by [Caleb Stewart](https://github.com/calebstewart).
+AMSI bypass technique from [rasta-mouse](https://github.com/rasta-mouse/AmsiScanBufferBypass).
