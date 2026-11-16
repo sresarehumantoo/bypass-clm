@@ -21,14 +21,15 @@ Options:
 Modes:
   standard   Self-contained exe; patches CLM + AMSI in memory (default)
   slim       Self-contained exe; no patches, just the runspace escape
+  lite       Framework-dependent exe; patches, needs .NET 10 + PS 7.6 on target
   dll        Framework-dependent class library; call loader.MainClass.go()
-  all        Build all three
+  all        Build all four
 
 Examples:
   ./build.sh                            # standard exe, local SDK
   ./build.sh --docker                   # standard exe via Docker
   ./build.sh --docker -m all            # all variants via Docker
-  ./build.sh -m slim -r win-arm64       # slim ARM64 exe, local SDK
+  ./build.sh -m lite -r win-arm64       # lite ARM64, local SDK
   ./build.sh --docker -m slim,standard  # two variants via Docker
 USAGE
 }
@@ -44,7 +45,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ $MODES == all ]] && MODES=standard,slim,dll
+[[ $MODES == all ]] && MODES=standard,slim,lite,dll
 
 build_local() {
     local mode=$1
@@ -57,6 +58,11 @@ build_local() {
             echo "[*] Building slim (runspace only, no patches)..."
             dotnet publish "$PROJ" -c Release -r "$RID" -o "$OUTDIR" \
                 -p:DefineConstants=SLIM -p:AssemblyName=bypass-clm-slim
+            ;;
+        lite)
+            echo "[*] Building lite (framework-dependent exe, needs .NET 10 + PS 7.6)..."
+            dotnet publish "$PROJ" -c Release -r "$RID" --self-contained false -o "$OUTDIR" \
+                -p:PublishSingleFile=false -p:AssemblyName=bypass-clm-lite
             ;;
         dll)
             echo "[*] Building dll (framework-dependent class library)..."

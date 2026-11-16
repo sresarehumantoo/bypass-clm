@@ -26,6 +26,14 @@ for mode in $(echo "$MODES" | tr ',' ' '); do
       cp /tmp/slim/bypass-clm-slim.exe /out/ 2>/dev/null \
         || cp /tmp/slim/bypass-clm-slim /out/
       ;;
+    lite)
+      dotnet publish bypass-clm/bypass-clm.csproj \
+        -c Release -r "$RID" --self-contained false -o /tmp/lite \
+        -p:PublishSingleFile=false -p:AssemblyName=bypass-clm-lite
+      cp /tmp/lite/bypass-clm-lite.exe /tmp/lite/bypass-clm-lite.dll \
+         /tmp/lite/bypass-clm-lite.deps.json \
+         /tmp/lite/bypass-clm-lite.runtimeconfig.json /out/
+      ;;
     dll)
       dotnet build bypass-clm/bypass-clm.csproj \
         -c Release -o /tmp/dll \
