@@ -8,6 +8,8 @@ self-contained executable.
 Modernized fork of [calebstewart/bypass-clm](https://github.com/calebstewart/bypass-clm),
 ported from .NET Framework 4.x to .NET 10 with the PowerShell 7.6 hosting API.
 
+**Tested on:** Windows Server 2025 (10.0.26100) with .NET 10.0.15 runtime.
+
 ![demo](docs/demo.gif)
 
 ## How it works
@@ -23,6 +25,15 @@ ported from .NET Framework 4.x to .NET 10 with the PowerShell 7.6 hosting API.
 
 No `powershell.exe` process is spawned. The interpreter runs in-process from
 the .NET libraries.
+
+## Pinned versions
+
+| Component | Version |
+|---|---|
+| Target framework | net10.0 |
+| Microsoft.PowerShell.SDK | 7.6.10 |
+| Tested .NET runtime | 10.0.15 |
+| Tested OS | Windows Server 2025 (10.0.26100.32230) |
 
 ## Building
 
