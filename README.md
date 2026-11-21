@@ -25,10 +25,10 @@ or via Docker.
 
 | Mode | Output | Size | Description |
 |---|---|---|---|
-| `standard` | `bypass-clm.exe` | 123 MB | Self-contained exe; patches CLM + AMSI in memory |
-| `slim` | `bypass-clm-slim.exe` | 123 MB | Self-contained exe; no patches, just the runspace escape |
-| `lite` | `bypass-clm-lite.exe` + `.dll` + `.deps.json` + `.runtimeconfig.json` | 230 KB | Framework-dependent exe; patches CLM + AMSI, requires .NET 10 + PS 7.6 on target |
-| `dll` | `bypass-clm.dll` | 8 KB | Framework-dependent class library; call `[loader.MainClass]::go()` from a .NET 10+ host |
+| `standard` | `ConfigHost.exe` | 123 MB | Self-contained exe; patches CLM + AMSI + ETW in memory |
+| `slim` | `ConfigHost-slim.exe` | 123 MB | Self-contained exe; no patches, just the runspace escape |
+| `lite` | `ConfigHost-lite.exe` + `.dll` + `.deps.json` + `.runtimeconfig.json` | 230 KB | Framework-dependent exe; patches, requires .NET 10 + PS 7.6 on target |
+| `dll` | `ConfigHost.dll` | 8 KB | Framework-dependent class library; call `[ConfigHost.Program]::Run()` from a .NET 10+ host |
 | `all` | all four | | Builds standard + slim + lite + dll |
 
 **standard** and **slim** are self-contained: drop and run, no runtime needed
@@ -41,25 +41,38 @@ target needs .NET 10 and PowerShell 7.6+ installed. The tradeoff is size
 Copy all four output files together.
 
 **dll** is a class library for injection into an existing .NET 10+ process
-(e.g. `Add-Type -Path bypass-clm.dll; [loader.MainClass]::go()` from a
+(e.g. `Add-Type -Path ConfigHost.dll; [ConfigHost.Program]::Run()` from a
 PowerShell 7.6+ session that already has Full Language).
 
 ## Variants
 
 ### Modern (.NET 10)
 
-Patches `GetSystemLockdownPolicy` and `AmsiScanBuffer` in memory, then drops
-into a Full Language Mode interactive PowerShell 7.6 session. Works from any
-path (no AppLocker bypass needed). Self-contained single-file publish.
+Patches `GetSystemLockdownPolicy`, `AmsiScanBuffer`, and `EtwEventWrite` in
+memory, opens a Full Language Mode interactive PowerShell 7.6 session, then
+restores the original bytes so the patches are not visible if memory is
+inspected afterward. Also disables ScriptBlock logging. Works from any path
+(no AppLocker bypass needed). Self-contained single-file publish.
+
+All sensitive strings (DLL names, export names, type names) and patch byte
+arrays are XOR-encoded at compile time and decoded at runtime.
 
 **How it works:**
 
-1. Reflectively loads `SystemPolicy` from `System.Management.Automation`.
-2. JIT-compiles `GetSystemLockdownPolicy`, then overwrites it with
-   `xor rax,rax; ret` via `VirtualProtect` + `Marshal.Copy`, forcing
+1. Patches `EtwEventWrite` in ntdll with `xor eax,eax; ret` to suppress ETW
+   tracing.
+2. Reflectively loads `SystemPolicy` from `System.Management.Automation`,
+   JIT-compiles `GetSystemLockdownPolicy`, then overwrites it with
+   `sub eax,eax; ret` via `VirtualProtect` + `Marshal.Copy`, forcing
    `SystemEnforcementMode.None`.
-3. Patches `AmsiScanBuffer` (rasta-mouse technique) to return `E_INVALIDARG`.
+3. Patches `AmsiScanBuffer` to write `AMSI_RESULT_CLEAN` to the result
+   pointer and return `S_OK`.
 4. Opens a PowerShell runspace via `InitialSessionState.CreateDefault2()`.
+5. Restores the original bytes of all three patched functions.
+6. Disables ScriptBlock logging by zeroing `_enableScriptBlockLogging` (or
+   `enableScriptBlockLogging` on builds where the underscore-prefixed field
+   does not exist, such as Win11 25H2 PS 5.1.26100) and setting
+   `scriptBlockLoggingExplicitlyDisabled` to true.
 
 **Tested on:** Windows Server 2025 (10.0.26100) with .NET 10.0.15 runtime.
 
@@ -86,9 +99,9 @@ Three build variants from a single source file via preprocessor directives:
 
 | Output | Define | Description |
 |---|---|---|
-| `bypass-clm.exe` | `FULL` | Full WinPS 5.1 runspace with core modules pre-loaded |
-| `bypass-clm-slim.exe` | (none) | Minimal runspace, smaller footprint, fewer signaturable strings |
-| `bypass-clm.dll` | `FULL,DLL` | InstallUtil loader for DLL-based AppLocker bypass |
+| `ConfigHost.exe` | `FULL` | Full WinPS 5.1 runspace with core modules pre-loaded |
+| `ConfigHost-slim.exe` | (none) | Minimal runspace, smaller footprint, fewer signaturable strings |
+| `ConfigHost.dll` | `FULL,DLL` | Class library; load via reflection from an allowed path |
 
 **Tested on:** Windows Server 2025 Core with AppLocker default rules enforced.
 
@@ -103,12 +116,12 @@ cd C:\work
 
 ```
 # EXE: copy to a writable subdirectory under an allowed path
-copy bypass-clm.exe C:\Windows\Tasks\
-C:\Windows\Tasks\bypass-clm.exe
+copy ConfigHost.exe C:\Windows\Tasks\
+C:\Windows\Tasks\ConfigHost.exe
 
-# DLL: load via InstallUtil from an allowed path
-copy bypass-clm.dll C:\Windows\Tasks\
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U C:\Windows\Tasks\bypass-clm.dll
+# DLL: load via reflection from an allowed path
+copy ConfigHost.dll C:\Windows\Tasks\
+powershell -c "[Reflection.Assembly]::LoadFrom('C:\Windows\Tasks\ConfigHost.dll'); [ConfigHost.Session]::Run()"
 ```
 
 The writable AppLocker bypass paths on a default deployment:
@@ -117,11 +130,11 @@ The writable AppLocker bypass paths on a default deployment:
 
 ## Usage (modern variant)
 
-Copy `bypass-clm.exe` to the target and run it. You get a `PS>` prompt in Full
-Language Mode with AMSI disabled.
+Copy `ConfigHost.exe` to the target and run it. You get a `PS>` prompt in Full
+Language Mode with AMSI, ETW, and ScriptBlock logging disabled.
 
 ```
-C:\work> bypass-clm.exe
+C:\work> ConfigHost.exe
 PS> $ExecutionContext.SessionState.LanguageMode
 FullLanguage
 PS> exit
@@ -132,13 +145,16 @@ PS> exit
 - Ported from .NET Framework 4.7.2 to .NET 10 (self-contained single-file publish).
 - Replaced deprecated `ConsoleShell.Start` / `RunspaceConfiguration` with
   `InitialSessionState.CreateDefault2()` and the modern PowerShell hosting API.
-- Removed `System.Configuration.Install` / `InstallUtil` loader class from the
-  modern variant (does not exist on modern .NET).
-- Patched `AmsiScanBuffer` with correct calling-convention stubs for both
-  x64 and x86.
+- Replaced P/Invoke `DllImport` with `NativeLibrary.Load`/`GetExport`.
+- XOR-encoded all sensitive strings and patch byte arrays.
+- Added `EtwEventWrite` patching and ScriptBlock logging disable.
+- Patches are restored after the runspace opens (clean memory on inspection).
+- Changed AMSI patch from returning `E_INVALIDARG` to writing
+  `AMSI_RESULT_CLEAN` and returning `S_OK`.
+- Renamed output binaries to `ConfigHost` to avoid obvious naming.
 - Added `build.sh` with `--docker` and `-m standard,slim,lite,dll,all` modes.
 - Added `framework/` variant: compiles with csc.exe on-target, three build
-  outputs (full exe, slim exe, InstallUtil DLL), WinPS 5.1 runspace.
+  outputs (full exe, slim exe, reflection-loaded DLL), WinPS 5.1 runspace.
 
 ## Credits
 
